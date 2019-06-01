@@ -9,37 +9,41 @@ type Link<T> = Option<Box<Node<T>>>;
 
 /// A node holds a value, and a pointer to a next node.
 #[derive(Debug)]
-struct Node<T> {
+pub struct Node<T: ?Sized, U: ?Sized = T> {
+    /// The next element of the list
+    next: Link<U>,
+    
     /// The value this node holds,
     item: T,
-
-    /// The next element of the list
-    next: Link<T>,
 }
 
-impl<T> Node<T> {
+impl<T, U: ?Sized> Node<T, U> {
     /// Returns a new node, with it next element set to `None`.
     #[inline(always)]
     pub const fn new(item: T) -> Self {
         Self { item, next: None }
     }
-
-    /// Returns a new node, with it next element set to `next`.
+    
+    /// Returns a new boxed node, with it next element set to `None`.
     #[inline(always)]
-    pub const fn new_with_next(item: T, next: Link<T>) -> Self {
-        Self { item, next }
+    pub fn boxed(item: T) -> Box<Self> {
+        Box::new(Self::new(item))
     }
 }
 
 /// A list of nodes.
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct List<T> {
+pub struct List<T: ?Sized> {
     /// Hold just the head of the list
     head: Link<T>,
 }
 
-impl<T> List<T> {
+impl <T: ?Sized> Default for List<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl <T: ?Sized> List<T> {
     /// Returns a new empty list.
     /// # Examples
     /// ```
@@ -58,44 +62,17 @@ impl<T> List<T> {
     pub fn is_empty(&self) -> bool {
         self.head.is_none()
     }
-
-    /// Pushes a new item to the front of the list.
-    /// # Examples
-    /// ```
-    /// # use lists::list::List;
-    /// let mut list = List::new();
-    /// list.push(10);
-    /// list.push(20);
-    ///
-    /// // The list contains 2 items,
-    /// // we get them out by popping again.
-    ///
-    /// assert_eq!(list.pop(), Some(20));
-    /// assert_eq!(list.pop(), Some(10));
-    /// ```
-    #[inline(always)]
-    pub fn push(&mut self, item: T) {
-        let new_node = Box::new(Node::new_with_next(item, self.head.take()));
-        self.head = Some(new_node);
+    
+    pub fn push_node(&mut self, mut node: Box<Node<T>>) {
+        node.next = self.head.take();
+        self.head = Some(node);
     }
-
-    /// Pops the last pushed item from the list.
-    /// # Examples
-    /// ```
-    /// # use lists::list::List;
-    /// let mut list = (0..3).collect::<List<_>>();
-    ///
-    /// assert_eq!(list.pop(), Some(2));
-    /// assert_eq!(list.pop(), Some(1));
-    /// assert_eq!(list.pop(), Some(0));
-    /// assert_eq!(list.pop(), None);
-    /// ```
-    #[inline(always)]
-    pub fn pop(&mut self) -> Option<T> {
-        self.head.take().map(|node| {
-            self.head = node.next;
-            node.item
-        })
+    
+    pub fn pop_node(&mut self) -> Option<Box<Node<T>>> {
+        self.head.take().map(|mut node| {
+            self.head = node.next.take();
+            node
+        }) 
     }
 
     /// Returns a reference to the head of the list.
@@ -182,9 +159,48 @@ impl<T> List<T> {
     }
 }
 
+impl<T> List<T> {
+    /// Pushes a new item to the front of the list.
+    /// # Examples
+    /// ```
+    /// # use lists::list::List;
+    /// let mut list = List::new();
+    /// list.push(10);
+    /// list.push(20);
+    ///
+    /// // The list contains 2 items,
+    /// // we get them out by popping again.
+    ///
+    /// assert_eq!(list.pop(), Some(20));
+    /// assert_eq!(list.pop(), Some(10));
+    /// ```
+    #[inline(always)]
+    pub fn push(&mut self, item: T) {
+        self.push_node(Node::boxed(item))
+    }
+
+    /// Pops the last pushed item from the list.
+    /// # Examples
+    /// ```
+    /// # use lists::list::List;
+    /// let mut list = (0..3).collect::<List<_>>();
+    ///
+    /// assert_eq!(list.pop(), Some(2));
+    /// assert_eq!(list.pop(), Some(1));
+    /// assert_eq!(list.pop(), Some(0));
+    /// assert_eq!(list.pop(), None);
+    /// ```
+    #[inline(always)]
+    pub fn pop(&mut self) -> Option<T> {
+        self.pop_node().map(|node| {
+            node.item
+        })
+    }
+}
+
 // An iterative drop,
 // because the default drop behaviour is recursive!
-impl<T> Drop for List<T> {
+impl<T: ?Sized> Drop for List<T> {
     fn drop(&mut self) {
         let mut cursor = self.head.take();
 
@@ -194,7 +210,7 @@ impl<T> Drop for List<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a List<T> {
+impl<'a, T: ?Sized> IntoIterator for &'a List<T> {
     type Item = &'a T;
     type IntoIter = Iter<'a, T>;
 
@@ -204,7 +220,7 @@ impl<'a, T> IntoIterator for &'a List<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a mut List<T> {
+impl<'a, T: ?Sized> IntoIterator for &'a mut List<T> {
     type Item = &'a mut T;
     type IntoIter = IterMut<'a, T>;
 
@@ -241,25 +257,24 @@ impl<T> FromIterator<T> for List<T> {
 }
 
 /// An iterator over a list of nodes.
-#[repr(transparent)]
-pub struct Iter<'a, T> {
+pub struct Iter<'a, T: ?Sized> {
     inner: Option<&'a Node<T>>,
 }
 
-impl<'a, T> Clone for Iter<'a, T> {
+impl<'a, T: ?Sized> Clone for Iter<'a, T> {
     fn clone(&self) -> Self {
         Iter { ..*self }
     }
 }
 
-impl<'a, T> Iter<'a, T> {
+impl<'a, T: ?Sized> Iter<'a, T> {
     #[inline(always)]
     fn peek(&self) -> Option<&T> {
         self.inner.as_ref().map(|node| &node.item)
     }
 }
 
-impl<'a, T> Iterator for Iter<'a, T> {
+impl<'a, T: ?Sized> Iterator for Iter<'a, T> {
     type Item = &'a T;
 
     #[inline(always)]
@@ -272,12 +287,11 @@ impl<'a, T> Iterator for Iter<'a, T> {
 }
 
 /// A mutable iterator over a list of nodes.
-#[repr(transparent)]
-pub struct IterMut<'a, T> {
+pub struct IterMut<'a, T: ?Sized> {
     inner: Option<&'a mut Node<T>>,
 }
 
-impl<'a, T> IterMut<'a, T> {
+impl<'a, T: ?Sized> IterMut<'a, T> {
     #[inline(always)]
     fn peek(&self) -> Option<&T> {
         self.inner.as_ref().map(|node| &node.item)
@@ -289,7 +303,7 @@ impl<'a, T> IterMut<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for IterMut<'a, T> {
+impl<'a, T: ?Sized> Iterator for IterMut<'a, T> {
     type Item = &'a mut T;
 
     #[inline(always)]
@@ -302,7 +316,6 @@ impl<'a, T> Iterator for IterMut<'a, T> {
 }
 
 /// An iterator over owned items in the list.
-#[repr(transparent)]
 pub struct IntoIter<T> {
     inner: List<T>,
 }
@@ -328,5 +341,18 @@ mod tests {
         let mut splitted = list.split_after(|x| *x == 3).unwrap();
 
         assert_eq!(splitted.pop(), Some(2));
+    }
+
+    #[test]
+    fn test_unsized_elements() {
+        
+        let mut list = List::new();
+
+        for n in 0..5 {
+            let node: Box<Node<[u32]>> = Node::boxed([n * 10, n * 20, n * 30, n * 50]);
+            list.push_node(node);
+        }
+
+        assert_eq!(list.peek(), Some(&[40, 80, 120, 200][..]));
     }
 }

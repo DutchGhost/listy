@@ -2,29 +2,33 @@ use core::{
     marker::PhantomData,
     ptr::NonNull,
     iter::FromIterator,
+    fmt::{self, Debug},
 };
 
 type Link<T> = Option<NonNull<Node<T>>>;
 
-trait IntoNonNull<T> {
-    fn into_non_null(self) -> NonNull<T>;
+trait IntoNonNull {
+    type Item: ?Sized;
+    fn into_non_null(self) -> NonNull<Self::Item>;
 }
 
-impl<T> IntoNonNull<T> for Box<T> {
+impl<T: ?Sized> IntoNonNull for Box<T> {
+    type Item = T;
+
     #[inline(always)]
-    fn into_non_null(self) -> NonNull<T> {
+    fn into_non_null(self) -> NonNull<Self::Item> {
         // We know a box is always nonnull
         unsafe { NonNull::new_unchecked(Box::into_raw(self)) }
     }
 }
 
-struct Node<T> {
+pub struct Node<T: ?Sized, U: ?Sized = T> {
+    next: Link<U>,
+    prev: Link<U>,
     item: T,
-    next: Link<T>,
-    prev: Link<T>,
 }
 
-impl<T> Node<T> {
+impl<T, U: ?Sized> Node<T, U> {
     #[inline(always)]
     pub const fn new(item: T) -> Self {
         Self {
@@ -33,25 +37,13 @@ impl<T> Node<T> {
             prev: None,
         }
     }
-
-    #[inline(always)]
-    pub const fn with_next(item: T, next: Link<T>) -> Self {
-        Self {
-            item,
-            next,
-            prev: None,
-        }
+    
+    pub fn boxed(item: T) -> Box<Self> {
+        Box::new(Self::new(item))
     }
+}
 
-    #[inline(always)]
-    pub const fn with_prev(item: T, prev: Link<T>) -> Self {
-        Self {
-            item,
-            prev,
-            next: None,
-        }
-    }
-
+impl <T> Node<T> {
     #[inline(always)]
     pub fn into_item(self: Box<Self>) -> T {
         self.item
@@ -59,18 +51,26 @@ impl<T> Node<T> {
 }
 
 /// A doubly list.
-pub struct DoublyList<T> {
+pub struct DoublyList<T: ?Sized> {
     head: Link<T>,
     tail: Link<T>,
+    len: usize,
     marker: PhantomData<Box<Node<T>>>,
 }
 
-impl <T: Clone> Clone for DoublyList<T> {
+impl <T: ?Sized + Clone> Clone for DoublyList<T> {
     fn clone(&self) -> Self {
         self.iter().cloned().collect()
     }
 }
-impl<T> DoublyList<T> {
+
+impl <T: ?Sized + Debug> Debug for DoublyList<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_list().entries(self).finish()
+    }
+}
+
+impl<T: ?Sized> DoublyList<T> {
     /*
      * Pushing to the front:
      *
@@ -129,7 +129,7 @@ impl<T> DoublyList<T> {
      *
      */
     #[inline(always)]
-    fn push_front_node(&mut self, mut node: Box<Node<T>>) {
+    fn push_front_node_private(&mut self, mut node: Box<Node<T>>) {
         unsafe {
             node.next = self.head;
             node.prev = None;
@@ -142,11 +142,12 @@ impl<T> DoublyList<T> {
             }
 
             self.head = node;
+            self.len += 1;
         }
     }
 
     #[inline(always)]
-    fn push_back_node(&mut self, mut node: Box<Node<T>>) {
+    fn push_back_node_private(&mut self, mut node: Box<Node<T>>) {
         unsafe {
             node.next = None;
             node.prev = self.tail;
@@ -159,6 +160,7 @@ impl<T> DoublyList<T> {
             }
 
             self.tail = node;
+            self.len += 1;
         }
     }
 
@@ -191,7 +193,7 @@ impl<T> DoublyList<T> {
      * ======================
      */
     #[inline(always)]
-    fn pop_front_node(&mut self) -> Option<Box<Node<T>>> {
+    fn pop_front_node_private(&mut self) -> Option<Box<Node<T>>> {
         self.head.map(|node| unsafe {
             let node = Box::from_raw(node.as_ptr());
             self.head = node.next;
@@ -200,13 +202,14 @@ impl<T> DoublyList<T> {
                 None => self.tail = None,
                 Some(head) => (*head.as_ptr()).prev = None,
             }
-
+            
+            self.len -= 1;
             node
         })
     }
 
     #[inline(always)]
-    fn pop_back_node(&mut self) -> Option<Box<Node<T>>> {
+    fn pop_back_node_private(&mut self) -> Option<Box<Node<T>>> {
         self.tail.map(|node| unsafe {
             let node = Box::from_raw(node.as_ptr());
             self.tail = node.prev;
@@ -215,35 +218,80 @@ impl<T> DoublyList<T> {
                 None => self.head = None,
                 Some(tail) => (*tail.as_ptr()).next = None,
             }
-
+            
+            self.len -= 1;
             node
         })
     }
 }
 
-impl<T> DoublyList<T> {
+impl <T: ?Sized> DoublyList<T> {
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
             head: None,
             tail: None,
+            len: 0,
             marker: PhantomData,
         }
     }
     
     #[inline(always)]
-    fn is_empty(&self) -> bool {
-        self.head.is_none() && self.tail.is_none()
+    pub const fn len(&self) -> usize {
+        self.len
     }
 
     #[inline(always)]
+    fn is_empty(&self) -> bool {
+        self.head.is_none() && self.tail.is_none()
+    }
+    
+    pub fn push_front_node(&mut self, node: Box<Node<T>>) {
+        self.push_front_node_private(node)
+    }
+
+    pub fn push_back_node(&mut self, node: Box<Node<T>>) {
+        self.push_back_node_private(node)
+    }
+
+    pub fn pop_front_node(&mut self) -> Option<Box<Node<T>>> {
+        self.pop_front_node_private()
+    }
+
+    pub fn pop_back_node(&mut self) -> Option<Box<Node<T>>> {
+        self.pop_back_node_private()
+    }
+
+    #[inline(always)]
+    pub const fn iter(&self) -> Iter<T> {
+        Iter {
+            head: self.head,
+            tail: self.tail,
+            len: self.len,
+            marker: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    pub fn iter_mut(&mut self) -> IterMut<T> {
+        IterMut {
+            head: self.head,
+            tail: self.tail,
+            len: self.len,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<T> DoublyList<T> {
+    #[inline(always)]
     pub fn push_front(&mut self, item: T) {
-        self.push_front_node(Box::new(Node::new(item)));
+        self.push_front_node(Node::boxed(item));
     }
 
     #[inline(always)]
     pub fn push_back(&mut self, item: T) {
-        self.push_back_node(Box::new(Node::new(item)));
+        self.push_back_node(Node::boxed(item));
     }
 
     #[inline(always)]
@@ -254,34 +302,16 @@ impl<T> DoublyList<T> {
     #[inline(always)]
     pub fn pop_back(&mut self) -> Option<T> {
         self.pop_back_node().map(Node::into_item)
-    }
-
-    #[inline(always)]
-    pub fn iter(&self) -> Iter<T> {
-        Iter {
-            head: self.head,
-            tail: self.tail,
-            marker: PhantomData,
-        }
-    }
-
-    #[inline(always)]
-    pub fn iter_mut(&mut self) -> IterMut<T> {
-        IterMut {
-            head: self.head,
-            tail: self.tail,
-            marker: PhantomData,
-        }
-    }
+    } 
 }
 
-impl<T> Drop for DoublyList<T> {
+impl<T: ?Sized> Drop for DoublyList<T> {
     fn drop(&mut self) {
-        while let Some(_) = self.pop_front() {}
+        while let Some(_) = self.pop_front_node() {}
     }
 }
 
-impl <'a, T> IntoIterator for &'a DoublyList<T> {
+impl <'a, T: ?Sized> IntoIterator for &'a DoublyList<T> {
     type Item = &'a T;
     type IntoIter = Iter<'a, T>;
 
@@ -291,7 +321,7 @@ impl <'a, T> IntoIterator for &'a DoublyList<T> {
     }
 }
 
-impl <'a, T> IntoIterator for &'a mut DoublyList<T> {
+impl <'a, T: ?Sized> IntoIterator for &'a mut DoublyList<T> {
     type Item = &'a mut T;
     type IntoIter = IterMut<'a, T>;
 
@@ -327,118 +357,125 @@ impl <T> FromIterator<T> for DoublyList<T> {
     }
 }
 
-pub struct Iter<'a, T> {
+pub struct Iter<'a, T: ?Sized> {
     head: Link<T>,
     tail: Link<T>,
+    len: usize,
     marker: PhantomData<&'a Node<T>>,
 }
 
-impl<'a, T> Clone for Iter<'a, T> {
+impl<'a, T: ?Sized> Clone for Iter<'a, T> {
     #[inline(always)]
     fn clone(&self) -> Self {
         Iter { ..*self }
     }
 }
 
-impl<'a, T> Iterator for Iter<'a, T> {
+impl <T: ?Sized + Debug> Debug for Iter<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("Iter")
+            .field(&self.len)
+            .finish()
+    }
+}
+
+impl<'a, T: ?Sized> Iterator for Iter<'a, T> {
     type Item = &'a T;
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        match (self.head, self.tail) {
-            (Some(head), Some(tail)) => {
-                let node = unsafe { &*head.as_ptr() };
-                if head.as_ptr() as usize == tail.as_ptr() as usize {
-                    self.head = None;
-                    self.tail = None;
-                } else {
-                    self.head = node.next;
-                }
-
-                Some(&node.item)
-            }
-
-            _ => None,
+        if self.len == 0 {
+            None
+        } else {
+            self.head.map(|node| unsafe {
+                // Need an unbound lifetime to get 'a
+                let node = &*node.as_ptr();
+                self.len -= 1;
+                self.head = node.next;
+                &node.item
+            })
         }
     }
 }
 
-impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
+impl<'a, T: ?Sized> DoubleEndedIterator for Iter<'a, T> {
     #[inline(always)]
     fn next_back(&mut self) -> Option<Self::Item> {
-        match (self.head, self.tail) {
-            (Some(head), Some(tail)) => {
-                let node = unsafe { &*tail.as_ptr() };
-
-                if head.as_ptr() as usize == tail.as_ptr() as usize {
-                    self.head = None;
-                    self.tail = None;
-                } else {
-                    self.tail = node.prev;
-                }
-
-                Some(&node.item)
-            }
-
-            _ => None,
+        if self.len == 0 {
+            None
+        } else {
+            self.tail.map(|node| unsafe {
+                // Need an unbound lifetime to get 'a
+                let node = &*node.as_ptr();
+                self.len -= 1;
+                self.tail = node.prev;
+                &node.item
+            })
         }
     }
 }
 
-pub struct IterMut<'a, T> {
+pub struct IterMut<'a, T: ?Sized> {
     head: Link<T>,
     tail: Link<T>,
+    len: usize,
     marker: PhantomData<&'a mut Node<T>>,
 }
 
-impl<'a, T> Iterator for IterMut<'a, T> {
+impl <T: ?Sized + Debug> Debug for IterMut<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("IterMut")
+            .field(&self.len)
+            .finish()
+    }
+}
+
+impl<'a, T: ?Sized> Iterator for IterMut<'a, T> {
     type Item = &'a mut T;
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        match (self.head, self.tail) {
-            (Some(head), Some(tail)) => {
-                let node = unsafe { &mut *head.as_ptr() };
-                if head.as_ptr() as usize == tail.as_ptr() as usize {
-                    self.head = None;
-                    self.tail = None;
-                } else {
-                    self.head = node.next;
-                }
-
-                Some(&mut node.item)
-            }
-
-            _ => None,
+        if self.len == 0 {
+            None
+        } else {
+            self.head.map(|node| unsafe {
+                // Need an unbound lifetime to get 'a
+                let node = &mut *node.as_ptr();
+                self.len -= 1;
+                self.head = node.next;
+                &mut node.item
+            })
         }
     }
 }
 
-impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
+impl<'a, T: ?Sized> DoubleEndedIterator for IterMut<'a, T> {
     #[inline(always)]
     fn next_back(&mut self) -> Option<Self::Item> {
-        match (self.head, self.tail) {
-            (Some(head), Some(tail)) => {
-                let node = unsafe { &mut *tail.as_ptr() };
-
-                if head.as_ptr() as usize == tail.as_ptr() as usize {
-                    self.head = None;
-                    self.tail = None;
-                } else {
-                    self.tail = node.prev;
-                }
-
-                Some(&mut node.item)
-            }
-
-            _ => None,
+        if self.len == 0 {
+            None
+        } else {
+            self.tail.map(|node| unsafe {
+                // Need an unbound lifetime to get 'a
+                let node = &mut *node.as_ptr();
+                self.len -= 1;
+                self.tail = node.prev;
+                &mut node.item
+            })
         }
     }
 }
 
-#[repr(transparent)]
 pub struct IntoIter<T> {
     inner: DoublyList<T>,
+}
+
+impl <T: Debug> Debug for IntoIter<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("IntoIter")
+            .field(&self.inner)
+            .finish()
+    }
 }
 
 impl <T> Iterator for IntoIter<T> {
