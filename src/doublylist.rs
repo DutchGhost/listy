@@ -1,8 +1,8 @@
 use core::{
+    fmt::{self, Debug},
+    iter::{ExactSizeIterator, FromIterator, FusedIterator},
     marker::PhantomData,
     ptr::NonNull,
-    iter::FromIterator,
-    fmt::{self, Debug},
 };
 
 type Link<T> = Option<NonNull<Node<T>>>;
@@ -37,13 +37,14 @@ impl<T, U: ?Sized> Node<T, U> {
             prev: None,
         }
     }
-    
+
+    #[inline(always)]
     pub fn boxed(item: T) -> Box<Self> {
         Box::new(Self::new(item))
     }
 }
 
-impl <T> Node<T> {
+impl<T> Node<T> {
     #[inline(always)]
     pub fn into_item(self: Box<Self>) -> T {
         self.item
@@ -58,13 +59,18 @@ pub struct DoublyList<T: ?Sized> {
     marker: PhantomData<Box<Node<T>>>,
 }
 
-impl <T: ?Sized + Clone> Clone for DoublyList<T> {
+unsafe impl<T: ?Sized + Send> Send for DoublyList<T> {}
+unsafe impl<T: ?Sized + Sync> Sync for DoublyList<T> {}
+
+impl<T: ?Sized + Clone> Clone for DoublyList<T> {
+    #[inline]
     fn clone(&self) -> Self {
         self.iter().cloned().collect()
     }
 }
 
-impl <T: ?Sized + Debug> Debug for DoublyList<T> {
+impl<T: ?Sized + Debug> Debug for DoublyList<T> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_list().entries(self).finish()
     }
@@ -202,7 +208,7 @@ impl<T: ?Sized> DoublyList<T> {
                 None => self.tail = None,
                 Some(head) => (*head.as_ptr()).prev = None,
             }
-            
+
             self.len -= 1;
             node
         })
@@ -218,14 +224,14 @@ impl<T: ?Sized> DoublyList<T> {
                 None => self.head = None,
                 Some(tail) => (*tail.as_ptr()).next = None,
             }
-            
+
             self.len -= 1;
             node
         })
     }
 }
 
-impl <T: ?Sized> DoublyList<T> {
+impl<T: ?Sized> DoublyList<T> {
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
@@ -235,29 +241,82 @@ impl <T: ?Sized> DoublyList<T> {
             marker: PhantomData,
         }
     }
-    
+
+    #[inline(always)]
+    pub fn clear(&mut self) {
+        *self = Self::new();
+    }
+
     #[inline(always)]
     pub const fn len(&self) -> usize {
         self.len
     }
 
     #[inline(always)]
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.head.is_none() && self.tail.is_none()
     }
-    
+
+    #[inline(always)]
+    pub fn peek_front(&self) -> Option<&T> {
+        if self.len == 0 {
+            None
+        } else {
+            unsafe {
+                self.head.as_ref().map(|node| &node.as_ref().item)
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn peek_front_mut(&mut self) -> Option<&mut T> {
+        if self.len == 0 {
+            None
+        } else {
+            unsafe {
+                self.head.as_mut().map(|node| &mut node.as_mut().item)
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn peek_back(&self) -> Option<&T> {
+        if self.len == 0 {
+            None
+        } else {
+            unsafe {
+                self.tail.as_ref().map(|node| &node.as_ref().item)
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn peek_back_mut(&mut self) -> Option<&mut T> {
+        if self.len == 0 {
+            None
+        } else {
+            unsafe {
+                self.tail.as_mut().map(|node| &mut node.as_mut().item)
+            }
+        }
+    }
+
+    #[inline(always)]
     pub fn push_front_node(&mut self, node: Box<Node<T>>) {
         self.push_front_node_private(node)
     }
 
+    #[inline(always)]
     pub fn push_back_node(&mut self, node: Box<Node<T>>) {
         self.push_back_node_private(node)
     }
 
+    #[inline(always)]
     pub fn pop_front_node(&mut self) -> Option<Box<Node<T>>> {
         self.pop_front_node_private()
     }
 
+    #[inline(always)]
     pub fn pop_back_node(&mut self) -> Option<Box<Node<T>>> {
         self.pop_back_node_private()
     }
@@ -302,7 +361,7 @@ impl<T> DoublyList<T> {
     #[inline(always)]
     pub fn pop_back(&mut self) -> Option<T> {
         self.pop_back_node().map(Node::into_item)
-    } 
+    }
 }
 
 impl<T: ?Sized> Drop for DoublyList<T> {
@@ -311,7 +370,7 @@ impl<T: ?Sized> Drop for DoublyList<T> {
     }
 }
 
-impl <'a, T: ?Sized> IntoIterator for &'a DoublyList<T> {
+impl<'a, T: ?Sized> IntoIterator for &'a DoublyList<T> {
     type Item = &'a T;
     type IntoIter = Iter<'a, T>;
 
@@ -321,7 +380,7 @@ impl <'a, T: ?Sized> IntoIterator for &'a DoublyList<T> {
     }
 }
 
-impl <'a, T: ?Sized> IntoIterator for &'a mut DoublyList<T> {
+impl<'a, T: ?Sized> IntoIterator for &'a mut DoublyList<T> {
     type Item = &'a mut T;
     type IntoIter = IterMut<'a, T>;
 
@@ -331,21 +390,21 @@ impl <'a, T: ?Sized> IntoIterator for &'a mut DoublyList<T> {
     }
 }
 
-impl <T> IntoIterator for DoublyList<T> {
+impl<T> IntoIterator for DoublyList<T> {
     type Item = T;
     type IntoIter = IntoIter<T>;
-    
+
     #[inline(always)]
     fn into_iter(self) -> Self::IntoIter {
         IntoIter { inner: self }
     }
 }
 
-impl <T> FromIterator<T> for DoublyList<T> {
+impl<T> FromIterator<T> for DoublyList<T> {
     #[inline]
     fn from_iter<I>(iter: I) -> Self
     where
-        I: IntoIterator<Item = T>
+        I: IntoIterator<Item = T>,
     {
         let mut list = DoublyList::new();
 
@@ -364,18 +423,22 @@ pub struct Iter<'a, T: ?Sized> {
     marker: PhantomData<&'a Node<T>>,
 }
 
-impl<'a, T: ?Sized> Clone for Iter<'a, T> {
+unsafe impl<T: ?Sized + Send> Send for Iter<'_, T> {}
+unsafe impl<T: ?Sized + Sync> Sync for Iter<'_, T> {}
+
+impl<T: ?Sized> Copy for Iter<'_, T> {}
+
+impl<T: ?Sized> Clone for Iter<'_, T> {
     #[inline(always)]
     fn clone(&self) -> Self {
         Iter { ..*self }
     }
 }
 
-impl <T: ?Sized + Debug> Debug for Iter<'_, T> {
+impl<T: ?Sized + Debug> Debug for Iter<'_, T> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("Iter")
-            .field(&self.len)
-            .finish()
+        f.debug_tuple("Iter").field(&self.len).finish()
     }
 }
 
@@ -396,6 +459,11 @@ impl<'a, T: ?Sized> Iterator for Iter<'a, T> {
             })
         }
     }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
 }
 
 impl<'a, T: ?Sized> DoubleEndedIterator for Iter<'a, T> {
@@ -415,6 +483,9 @@ impl<'a, T: ?Sized> DoubleEndedIterator for Iter<'a, T> {
     }
 }
 
+impl<T: ?Sized> FusedIterator for Iter<'_, T> {}
+impl<T: ?Sized> ExactSizeIterator for Iter<'_, T> {}
+
 pub struct IterMut<'a, T: ?Sized> {
     head: Link<T>,
     tail: Link<T>,
@@ -422,11 +493,12 @@ pub struct IterMut<'a, T: ?Sized> {
     marker: PhantomData<&'a mut Node<T>>,
 }
 
-impl <T: ?Sized + Debug> Debug for IterMut<'_, T> {
+unsafe impl<T: ?Sized + Send> Send for IterMut<'_, T> {}
+unsafe impl<T: ?Sized + Sync> Sync for IterMut<'_, T> {}
+
+impl<T: ?Sized + Debug> Debug for IterMut<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("IterMut")
-            .field(&self.len)
-            .finish()
+        f.debug_tuple("IterMut").field(&self.len).finish()
     }
 }
 
@@ -447,6 +519,11 @@ impl<'a, T: ?Sized> Iterator for IterMut<'a, T> {
             })
         }
     }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
 }
 
 impl<'a, T: ?Sized> DoubleEndedIterator for IterMut<'a, T> {
@@ -466,33 +543,43 @@ impl<'a, T: ?Sized> DoubleEndedIterator for IterMut<'a, T> {
     }
 }
 
+impl<T: ?Sized> FusedIterator for IterMut<'_, T> {}
+impl<T: ?Sized> ExactSizeIterator for IterMut<'_, T> {}
+
 pub struct IntoIter<T> {
     inner: DoublyList<T>,
 }
 
-impl <T: Debug> Debug for IntoIter<T> {
+impl<T: Debug> Debug for IntoIter<T> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("IntoIter")
-            .field(&self.inner)
-            .finish()
+        f.debug_tuple("IntoIter").field(&self.inner).finish()
     }
 }
 
-impl <T> Iterator for IntoIter<T> {
+impl<T> Iterator for IntoIter<T> {
     type Item = T;
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.pop_front()
     }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.inner.len, Some(self.inner.len))
+    }
 }
 
-impl <T> DoubleEndedIterator for IntoIter<T> {
+impl<T> DoubleEndedIterator for IntoIter<T> {
     #[inline(always)]
     fn next_back(&mut self) -> Option<Self::Item> {
         self.inner.pop_back()
     }
 }
+
+impl<T> FusedIterator for IntoIter<T> {}
+impl<T> ExactSizeIterator for IntoIter<T> {}
 
 #[cfg(test)]
 mod tests {
@@ -517,5 +604,16 @@ mod tests {
         assert_eq!(iter.next_back(), Some(&0));
         assert_eq!(iter.next_back(), None);
         assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_unsized_list() {
+        use core::any::Any;
+
+        let mut list = DoublyList::new();
+
+        let node: Box<Node<dyn Any>> = Node::boxed(10usize);
+
+        list.push_front_node(node);
     }
 }

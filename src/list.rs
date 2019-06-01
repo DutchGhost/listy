@@ -1,4 +1,4 @@
-use core::iter::FromIterator;
+use core::iter::{FromIterator, FusedIterator};
 
 /// The type used to link to another Node.
 ///
@@ -12,7 +12,7 @@ type Link<T> = Option<Box<Node<T>>>;
 pub struct Node<T: ?Sized, U: ?Sized = T> {
     /// The next element of the list
     next: Link<U>,
-    
+
     /// The value this node holds,
     item: T,
 }
@@ -23,7 +23,7 @@ impl<T, U: ?Sized> Node<T, U> {
     pub const fn new(item: T) -> Self {
         Self { item, next: None }
     }
-    
+
     /// Returns a new boxed node, with it next element set to `None`.
     #[inline(always)]
     pub fn boxed(item: T) -> Box<Self> {
@@ -37,13 +37,14 @@ pub struct List<T: ?Sized> {
     head: Link<T>,
 }
 
-impl <T: ?Sized> Default for List<T> {
+impl<T: ?Sized> Default for List<T> {
+    #[inline(always)]
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl <T: ?Sized> List<T> {
+impl<T: ?Sized> List<T> {
     /// Returns a new empty list.
     /// # Examples
     /// ```
@@ -57,22 +58,29 @@ impl <T: ?Sized> List<T> {
         Self { head: None }
     }
 
+    #[inline(always)]
+    pub fn clear(&mut self) {
+        *self = Self::new();
+    }
+
     /// Returns `true` if the list is empty, false otherwise.
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.head.is_none()
     }
-    
+
+    #[inline(always)]
     pub fn push_node(&mut self, mut node: Box<Node<T>>) {
         node.next = self.head.take();
         self.head = Some(node);
     }
-    
+
+    #[inline(always)]
     pub fn pop_node(&mut self) -> Option<Box<Node<T>>> {
         self.head.take().map(|mut node| {
             self.head = node.next.take();
             node
-        }) 
+        })
     }
 
     /// Returns a reference to the head of the list.
@@ -192,9 +200,7 @@ impl<T> List<T> {
     /// ```
     #[inline(always)]
     pub fn pop(&mut self) -> Option<T> {
-        self.pop_node().map(|node| {
-            node.item
-        })
+        self.pop_node().map(|node| node.item)
     }
 }
 
@@ -261,15 +267,18 @@ pub struct Iter<'a, T: ?Sized> {
     inner: Option<&'a Node<T>>,
 }
 
-impl<'a, T: ?Sized> Clone for Iter<'a, T> {
+impl<T: ?Sized> Copy for Iter<'_, T> {}
+
+impl<T: ?Sized> Clone for Iter<'_, T> {
+    #[inline(always)]
     fn clone(&self) -> Self {
         Iter { ..*self }
     }
 }
 
-impl<'a, T: ?Sized> Iter<'a, T> {
+impl<T: ?Sized> Iter<'_, T> {
     #[inline(always)]
-    fn peek(&self) -> Option<&T> {
+    pub fn peek(&self) -> Option<&T> {
         self.inner.as_ref().map(|node| &node.item)
     }
 }
@@ -286,19 +295,21 @@ impl<'a, T: ?Sized> Iterator for Iter<'a, T> {
     }
 }
 
+impl<T: ?Sized> FusedIterator for Iter<'_, T> {}
+
 /// A mutable iterator over a list of nodes.
 pub struct IterMut<'a, T: ?Sized> {
     inner: Option<&'a mut Node<T>>,
 }
 
-impl<'a, T: ?Sized> IterMut<'a, T> {
+impl<T: ?Sized> IterMut<'_, T> {
     #[inline(always)]
-    fn peek(&self) -> Option<&T> {
+    pub fn peek(&self) -> Option<&T> {
         self.inner.as_ref().map(|node| &node.item)
     }
 
     #[inline(always)]
-    fn peek_mut(&mut self) -> Option<&mut T> {
+    pub fn peek_mut(&mut self) -> Option<&mut T> {
         self.inner.as_mut().map(|node| &mut node.item)
     }
 }
@@ -315,6 +326,8 @@ impl<'a, T: ?Sized> Iterator for IterMut<'a, T> {
     }
 }
 
+impl<T: ?Sized> FusedIterator for IterMut<'_, T> {}
+
 /// An iterator over owned items in the list.
 pub struct IntoIter<T> {
     inner: List<T>,
@@ -328,6 +341,8 @@ impl<T> Iterator for IntoIter<T> {
         self.inner.pop()
     }
 }
+
+impl<T> FusedIterator for IntoIter<T> {}
 
 #[cfg(test)]
 mod tests {
@@ -345,7 +360,6 @@ mod tests {
 
     #[test]
     fn test_unsized_elements() {
-        
         let mut list = List::new();
 
         for n in 0..5 {
